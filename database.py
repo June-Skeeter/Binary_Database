@@ -37,11 +37,12 @@ class database:
         dataOut[integers] = dataOut[integers].fillna(self.intMask)
         dataOut = dataOut.astype(dtypesIn)
         # Get start of each year
-        yix = pd.date_range(f"{dataframe.index.year.min()}-01-01T00:00:00+00:00",f"{dataframe.index.year.max()}-01-01T00:00:00+00:00",freq='YS',inclusive='left')+self.timedelta
+        yix = pd.date_range(f"{ix.year.min()}-01-01T00:00:00+00:00",f"{ix.year.max()+1}-01-01T00:00:00+00:00",freq='YS',inclusive='left')+self.timedelta
         # Write each year to database
 
         for yyyy in yix:
             pth = self.databasePath.replace('yyyy',f"{yyyy.year}")
+            print(pth)
             os.makedirs(pth,exist_ok=True)
             # write each column with dtype as file extension
             for colName,dtype in dataOut.dtypes.items():
@@ -69,6 +70,8 @@ class database:
                 missingData.columns = pd.MultiIndex.from_tuples(missing)
                 df[yyyy] = df[yyyy].join(missingData)
         dataOut = pd.concat([data for data in df.values()])
+        dataOut.index = pd.to_datetime(dataOut[('posixtime','int64')],unit='s')
+        dataOut.index = dataOut.index.tz_localize(self.timezone)
         return (dataOut)
         
 
