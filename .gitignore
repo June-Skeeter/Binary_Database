@@ -3,5 +3,6 @@
 !test.py
 !requirements.in
 !README.md
+!__init__.py
 # .venv
 # __pycache__
