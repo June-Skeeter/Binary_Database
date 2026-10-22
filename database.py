@@ -12,6 +12,7 @@ class database:
     # timestamp: str = 'posixtime.int64'
     intMask: str = 9999
     timezone: str = 'UTC'
+    errors: str = 'raise'
 
     def __post_init__(self):
         if 'YYYY' not in self.databasePath:
@@ -22,6 +23,8 @@ class database:
     def loadDataFrame(self,dataframe):
         if dataframe.empty:
             return (False)
+        elif dataframe.index.duplicated().sum():
+            return (f"Warning: Duplicated timestamps in database submission: {dataframe.index[dataframe.index.duplicated(keep=False)].values}\n fix before proceeding")
         if dataframe.columns.names == [None] or len(dataframe.columns.names)==1:
             metadata = {col:{'variableName':col,'dataType':str(dataframe[col].dtype)} for col in dataframe.columns}
         else:
@@ -73,7 +76,7 @@ class database:
                 if is_float_dtype(dtype) or is_integer_dtype(dtype):
                     dataOut[colName].values.tofile(os.path.join(pth,f"{colName}.{str(dtype)}"))
                 else:
-                    print(f'Ignoing non-numeric variable: {colName}')
+                    print(f'Ignoring non-numeric variable: {colName}')
         return(True)
 
     def readFolder(self,pth):
@@ -87,11 +90,18 @@ class database:
         cols = []
         for yyyy in range(startYear,stopYear+1):
             pth = self.databasePath.replace('yyyy',f"{yyyy}")
-            if not os.path.isdir(pth): exit(f"Warning:\n\nNot a database folder: {pth}")
-            df[yyyy] = self.readFolder(pth)
-            cols = cols + list(df[yyyy].columns)
+            if not os.path.isdir(pth): 
+                if self.errors == 'raise':
+                    exit(f"Warning:\n\nNot a database folder: {pth}")
+                else:
+                    df[yyyy] = pd.DataFrame()
+            else:
+                df[yyyy] = self.readFolder(pth)
+                cols = cols + list(df[yyyy].columns)
         cols = list(set(cols))
         for yyyy in range(startYear,stopYear+1):
+            if df[yyyy].empty:
+                continue
             missing = [c for c in cols if c not in df[yyyy].columns]
             if len(missing):
                 # missingInt = missing[m[1] for m in missing]
