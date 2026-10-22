@@ -10,7 +10,7 @@ class database:
     databaseInterval: float = 1800.0
     # dtypeDefault: str = 'float32'
     # timestamp: str = 'posixtime.int64'
-    intMask: str = -9999
+    intMask: str = 9999
     timezone: str = 'UTC'
 
     def __post_init__(self):
@@ -21,7 +21,6 @@ class database:
         
     def loadDataFrame(self,dataframe):
         if dataframe.empty:
-            
             return (False)
         if dataframe.columns.names == [None] or len(dataframe.columns.names)==1:
             metadata = {col:{'variableName':col,'dataType':str(dataframe[col].dtype)} for col in dataframe.columns}
@@ -34,12 +33,11 @@ class database:
         else:
             dataframe.index = dataframe.index.tz_convert('UTC')
         
-            
         dataframe.columns = [vn['variableName'] for vn in metadata.values()]
         # Assumes timestamp represents end of observation interval
         # Create timestamp
         ix = dataframe.index-self.timedelta
-        ix = pd.date_range(f"{dataframe.index.year.min()}-01-01T00:00:00+00:00",f"{dataframe.index.year.max()}-01-01T00:00:00+00:00",freq=self.timedelta,inclusive='left')+self.timedelta
+        ix = pd.date_range(f"{dataframe.index.year.min()}-01-01T00:00:00+00:00",f"{dataframe.index.year.max()+1}-01-01T00:00:00+00:00",freq=self.timedelta,inclusive='left')+self.timedelta
         timestamp = pd.Series(
             index = ix,
             name = 'posixtime',
@@ -48,27 +46,41 @@ class database:
         # Get dtypes and join timestamp
         dtypesIn = dataframe.dtypes
         integers = dtypesIn[[is_integer_dtype(d) for d in dtypesIn]].index
-        dataOut = pd.DataFrame(timestamp).join(dataframe)
+        allDataOut = pd.DataFrame(timestamp).join(dataframe)
         # Fill int nans the recast types
-        dataOut[integers] = dataOut[integers].fillna(self.intMask)
-        dataOut = dataOut.astype(dtypesIn)
+        allDataOut[integers] = allDataOut[integers].fillna(self.intMask)
+        allDataOut = allDataOut.astype(dtypesIn)
         # Get start of each year
-        yix = pd.date_range(f"{ix.year.min()}-01-01T00:00:00+00:00",f"{ix.year.max()+1}-01-01T00:00:00+00:00",freq='YS',inclusive='left')+self.timedelta
+        yix = pd.date_range(f"{ix.year.min()}-01-01T00:00:00+00:00",f"{ix.year.max()}-01-01T00:00:00+00:00",freq='YS',inclusive='left')+self.timedelta
         # Write each year to database
 
         for yyyy in yix:
             pth = self.databasePath.replace('yyyy',f"{yyyy.year}")
-            print(pth)
-            os.makedirs(pth,exist_ok=True)
+            dataOut = allDataOut.loc[((allDataOut.index>=yyyy)&(allDataOut.index<yyyy+pd.DateOffset(years=1)))].copy()
+            if os.path.isdir(pth):
+                dataIn = self.readFolder(pth)
+                dataIn.columns = dataIn.columns.get_level_values(0)
+                # Fill missing (this part only works for floats)
+                dataOut = dataOut.fillna(dataIn)
+                # repeat for integers
+                ints = [i for i in integers if i in dataIn.columns]
+                if len(ints)>0:
+                    dataOut[ints] = dataOut[ints].replace({self.intMask:np.nan}).fillna(dataIn[ints]).astype(dataIn[ints].dtypes)
+            else:
+                os.makedirs(pth)
             # write each column with dtype as file extension
             for colName,dtype in dataOut.dtypes.items():
                 if is_float_dtype(dtype) or is_integer_dtype(dtype):
-                    dataOut.loc[
-                        ((dataOut.index>=yyyy)&(dataOut.index<yyyy+pd.DateOffset(years=1))),colName
-                        ].values.tofile(os.path.join(pth,f"{colName}.{str(dtype)}"))
+                    dataOut[colName].values.tofile(os.path.join(pth,f"{colName}.{str(dtype)}"))
                 else:
                     print(f'Ignoing non-numeric variable: {colName}')
         return(True)
+
+    def readFolder(self,pth):
+        dataOut = pd.DataFrame({(fn.split('.')[0],fn.rsplit('.')[-1]):np.fromfile(os.path.join(pth,fn),dtype = fn.rsplit('.')[-1]) for fn in os.listdir(pth)})
+        dataOut.index = pd.to_datetime(dataOut[('posixtime','int64')],unit='s')
+        dataOut.index = dataOut.index.tz_localize(self.timezone)
+        return(dataOut)
 
     def loadDatabase(self,startYear,stopYear):
         df = {}
@@ -76,7 +88,7 @@ class database:
         for yyyy in range(startYear,stopYear+1):
             pth = self.databasePath.replace('yyyy',f"{yyyy}")
             if not os.path.isdir(pth): exit(f"Warning:\n\nNot a database folder: {pth}")
-            df[yyyy] = pd.DataFrame({(fn.split('.')[0],fn.rsplit('.')[-1]):np.fromfile(os.path.join(pth,fn),dtype = fn.rsplit('.')[-1]) for fn in os.listdir(pth)})
+            df[yyyy] = self.readFolder(pth)
             cols = cols + list(df[yyyy].columns)
         cols = list(set(cols))
         for yyyy in range(startYear,stopYear+1):
@@ -90,8 +102,6 @@ class database:
                 missingData.columns = pd.MultiIndex.from_tuples(missing)
                 df[yyyy] = df[yyyy].join(missingData)
         dataOut = pd.concat([data for data in df.values()])
-        dataOut.index = pd.to_datetime(dataOut[('posixtime','int64')],unit='s')
-        dataOut.index = dataOut.index.tz_localize(self.timezone)
         return (dataOut)
         
 
