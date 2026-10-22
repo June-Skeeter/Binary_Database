@@ -12,7 +12,7 @@ df = pd.DataFrame(
     # dtype = {'A':'float32'}
 )
 df['j'] = df['j'].astype('float32')
-database(databasePath='testDatabase').loadFile(df)
+database(databasePath='testDatabase').loadDataFrame(df)
 df = database(databasePath='testDatabase').loadDatabase(startYear=2023,stopYear=2025)
 
 print(df)

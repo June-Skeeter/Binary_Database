@@ -19,7 +19,23 @@ class database:
             self.databasePath = os.path.join(self.databasePath,'yyyy')
         self.timedelta = pd.to_timedelta(self.databaseInterval,unit='s')
         
-    def loadFile(self,dataframe):
+    def loadDataFrame(self,dataframe):
+        if dataframe.empty:
+            
+            return (False)
+        if dataframe.columns.names == [None] or len(dataframe.columns.names)==1:
+            metadata = {col:{'variableName':col,'dataType':str(dataframe[col].dtype)} for col in dataframe.columns}
+        else:
+            metadata = {col[0]:{vn:col[i] for i,vn in enumerate(dataframe.columns.names)} for col in dataframe.columns}
+
+        # set to uct if not already
+        if dataframe.index.tz is None:
+            dataframe.index = dataframe.index.tz_localize('UTC')
+        else:
+            dataframe.index = dataframe.index.tz_convert('UTC')
+        
+            
+        dataframe.columns = [vn['variableName'] for vn in metadata.values()]
         # Assumes timestamp represents end of observation interval
         # Create timestamp
         ix = dataframe.index-self.timedelta
@@ -46,9 +62,13 @@ class database:
             os.makedirs(pth,exist_ok=True)
             # write each column with dtype as file extension
             for colName,dtype in dataOut.dtypes.items():
-                dataOut.loc[
-                    ((dataOut.index>=yyyy)&(dataOut.index<yyyy+pd.DateOffset(years=1))),colName
-                    ].values.tofile(os.path.join(pth,f"{colName}.{str(dtype)}"))
+                if is_float_dtype(dtype) or is_integer_dtype(dtype):
+                    dataOut.loc[
+                        ((dataOut.index>=yyyy)&(dataOut.index<yyyy+pd.DateOffset(years=1))),colName
+                        ].values.tofile(os.path.join(pth,f"{colName}.{str(dtype)}"))
+                else:
+                    print(f'Ignoing non-numeric variable: {colName}')
+        return(True)
 
     def loadDatabase(self,startYear,stopYear):
         df = {}
