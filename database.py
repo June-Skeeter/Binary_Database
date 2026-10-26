@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from pandas.api.types import is_float_dtype,is_integer_dtype
 import pandas as pd
 import numpy as np
+import json
 import os
 
 @dataclass(kw_only=True)
@@ -13,9 +14,10 @@ class database:
     intMask: str = 9999
     timezone: str = 'UTC'
     errors: str = 'raise'
+    metaFile: str = '_metadata.json'
 
     def __post_init__(self):
-        if 'YYYY' not in self.databasePath:
+        if 'yyyy' not in self.databasePath:
             print(f'reformatting to {self.databasePath}/yyyy')
             self.databasePath = os.path.join(self.databasePath,'yyyy')
         self.timedelta = pd.to_timedelta(self.databaseInterval,unit='s')
@@ -36,7 +38,7 @@ class database:
         else:
             dataframe.index = dataframe.index.tz_convert('UTC')
         
-        dataframe.columns = [vn['variableName'] for vn in metadata.values()]
+        dataframe.columns = list(metadata.keys())
         # Assumes timestamp represents end of observation interval
         # Create timestamp
         ix = dataframe.index-self.timedelta
@@ -61,7 +63,7 @@ class database:
             pth = self.databasePath.replace('yyyy',f"{yyyy.year}")
             dataOut = allDataOut.loc[((allDataOut.index>=yyyy)&(allDataOut.index<yyyy+pd.DateOffset(years=1)))].copy()
             if os.path.isdir(pth):
-                dataIn = self.readFolder(pth)
+                dataIn,metadataIn = self.readFolder(pth)
                 dataIn.columns = dataIn.columns.get_level_values(0)
                 # Fill missing (this part only works for floats)
                 dataOut = dataOut.fillna(dataIn)
@@ -77,16 +79,23 @@ class database:
                     dataOut[colName].values.tofile(os.path.join(pth,f"{colName}.{str(dtype)}"))
                 else:
                     print(f'Ignoring non-numeric variable: {colName}')
+                
+            with open(os.path.join(pth,self.metaFile),'w+') as f:
+                json.dump(metadata,f)
         return(True)
 
     def readFolder(self,pth):
-        dataOut = pd.DataFrame({(fn.split('.')[0],fn.rsplit('.')[-1]):np.fromfile(os.path.join(pth,fn),dtype = fn.rsplit('.')[-1]) for fn in os.listdir(pth)})
+        with open(os.path.join(pth,self.metaFile)) as f:
+            metadataOut = json.load(f)
+        exclude = ['.json','.yml','.txt','.csv','.gitignore','.ini','.py','.r']
+        dataOut = pd.DataFrame({(fn.split('.')[0],fn.rsplit('.')[-1]):np.fromfile(os.path.join(pth,fn),dtype = fn.rsplit('.')[-1]) for fn in os.listdir(pth) if not any([fn.lower().endswith(ext) for ext in exclude])})
         dataOut.index = pd.to_datetime(dataOut[('posixtime','int64')],unit='s')
         dataOut.index = dataOut.index.tz_localize(self.timezone)
-        return(dataOut)
+        return(dataOut,metadataOut)
 
     def loadDatabase(self,startYear,stopYear):
         df = {}
+        md = {}
         cols = []
         for yyyy in range(startYear,stopYear+1):
             pth = self.databasePath.replace('yyyy',f"{yyyy}")
@@ -96,7 +105,7 @@ class database:
                 else:
                     df[yyyy] = pd.DataFrame()
             else:
-                df[yyyy] = self.readFolder(pth)
+                df[yyyy],md[yyyy] = self.readFolder(pth)
                 cols = cols + list(df[yyyy].columns)
         cols = list(set(cols))
         for yyyy in range(startYear,stopYear+1):
@@ -112,6 +121,18 @@ class database:
                 missingData.columns = pd.MultiIndex.from_tuples(missing)
                 df[yyyy] = df[yyyy].join(missingData)
         dataOut = pd.concat([data for data in df.values()])
+        metadataOut = {}
+        for yyyy in md.keys():
+            if metadataOut == {}:
+                metadataOut = md[yyyy]
+            else:
+                if metadataOut != md[yyyy]:
+                    for k,v in md[yyyy].items():
+                        if k not in metadataOut:
+                            metadataOut[k] = md[yyyy][k]
+                        else:
+                            exit(f'Warning: Metadata do not match for {k}:\n current {metadataOut[k]}, incoming {md[yyyy][k]}')
+        metadataOut = {md[yyyy] for yyyy in md.keys()}
         return (dataOut)
         
 
